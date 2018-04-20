@@ -16,3 +16,18 @@ The main improvement comes from
 3. using clustering to select proper CV set 
 4. divide large picture into small part during inference 
 5. finetuning the trainging schedule and mask rcnn configuration
+
+## Dependencies
++ Python 3; TensorFlow >= 1.5.0;keras>=2.0.5
++ Pre-trained [ResNet model](https://github.com/fchollet/deep-learning-models/releases/download/v0.2/resnet50_weights_tf_dim_ordering_tf_kernels_notop.h5) from keras pretrain model .
++ data science bowl data. It assumes the following directory structure:
+```
+DIR/
+  stage1_train/
+    images/
+    masks/
+  stage1_test/
+    images/
+  stage2_test/
+    images/
+```
