@@ -31,3 +31,26 @@ DIR/
   stage2_test/
     images/
 ```
+
+## Command line Usage
+The Command line tool hasn't been test yet, if you encounter any bug, see main.ipynb as conference 
+
+Train a new model starting from ImageNet weights using `train` dataset (which is `stage1_train` minus validation set)
+```
+python3 nucleus.py train --dataset=/path/to/dataset --subset=train --weights=imagenet
+```
+
+Train a new model starting from specific weights file using the full `stage1_train` dataset
+```
+python3 nucleus.py train --dataset=/path/to/dataset --subset=stage1_train --weights=/path/to/weights.h5
+```
+
+Resume training a model that you had trained earlier
+```
+python3 nucleus.py train --dataset=/path/to/dataset --subset=train --weights=last
+```
+
+Generate submission file from `stage1_test` images
+```
+python3 nucleus.py detect --dataset=/path/to/dataset --subset=stage1_test --weights=<last or /path/to/weights.h5>
+```
