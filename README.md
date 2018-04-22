@@ -12,6 +12,7 @@ The code is based on mateerport's mask rcnn：[https://github.com/matterport/Mas
 
 The main improvement comes from 
 1. better roi align implementation which is modified from [tensorpack faster rcnn](https://github.com/ppwwyyxx/tensorpack/tree/master/examples/FasterRCNN)
+2. large separable convolution from[Light Head Rcnn Paper](https://arxiv.org/abs/1711.07264)
 2. strong image augmentation especially random scale crop
 3. using clustering to select proper CV set 
 4. divide large picture into small part during inference 
