@@ -32,8 +32,8 @@ DIR/
     images/
 ```
 
-## Command line Usage
-The Command line tool hasn't been test yet, if you encounter any bug, see main.ipynb as conference 
+##  Usage
+**The Command line tool hasn't been test yet, if you encounter any bug, see main.ipynb as conference**
 
 Train a new model starting from ImageNet weights using `train` dataset (which is `stage1_train` minus validation set)
 ```
