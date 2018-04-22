@@ -37,21 +37,43 @@ if __name__ == '__main__':
 
 import os
 import sys
-import json
-import datetime
+import random
+import math
+import re
+import time
+import cv2
+import tensorflow as tf
 import numpy as np
-import skimage.io
-from imgaug import augmenters as iaa
+import pandas as pd
+import matplotlib
+import matplotlib.pyplot as plt
+import csv
+import imageio
+import skimage
+from config import Config
+from skimage.morphology import label
+from skimage.feature import canny
+from skimage import exposure
+from keras.callbacks import Callback
+from skimage.morphology import binary_closing, binary_opening, disk, binary_dilation
+from scipy.ndimage.morphology import binary_fill_holes
+from sklearn.externals import joblib
+from skimage.transform import PiecewiseAffineTransform, warp
+from skimage.morphology import watershed
+from skimage.filters import sobel
+from imp import reload
+import utils
+import model_sep_roi_LH as modellib
+import visualize
+from model_sep_roi_LH import log
+import divide
 
 # Root directory of the project
-ROOT_DIR = os.path.abspath("../../")
+ROOT_DIR = os.path.abspath("./")
 
 # Import Mask RCNN
 sys.path.append(ROOT_DIR)  # To find local version of the library
-from mrcnn.config import Config
-from mrcnn import utils
-from mrcnn import model as modellib
-from mrcnn import visualize
+
 
 # Path to trained weights file
 COCO_WEIGHTS_PATH = os.path.join(ROOT_DIR, "mask_rcnn_coco.h5")
@@ -66,197 +88,192 @@ RESULTS_DIR = os.path.join(ROOT_DIR, "results/nucleus/")
 
 # The dataset doesn't have a standard train/val split, so I picked
 # a variety of images to surve as a validation set.
-VAL_IMAGE_IDS = [
-    "0c2550a23b8a0f29a7575de8c61690d3c31bc897dd5ba66caec201d201a278c2",
-    "92f31f591929a30e4309ab75185c96ff4314ce0a7ead2ed2c2171897ad1da0c7",
-    "1e488c42eb1a54a3e8412b1f12cde530f950f238d71078f2ede6a85a02168e1f",
-    "c901794d1a421d52e5734500c0a2a8ca84651fb93b19cec2f411855e70cae339",
-    "8e507d58f4c27cd2a82bee79fe27b069befd62a46fdaed20970a95a2ba819c7b",
-    "60cb718759bff13f81c4055a7679e81326f78b6a193a2d856546097c949b20ff",
-    "da5f98f2b8a64eee735a398de48ed42cd31bf17a6063db46a9e0783ac13cd844",
-    "9ebcfaf2322932d464f15b5662cae4d669b2d785b8299556d73fffcae8365d32",
-    "1b44d22643830cd4f23c9deadb0bd499fb392fb2cd9526d81547d93077d983df",
-    "97126a9791f0c1176e4563ad679a301dac27c59011f579e808bbd6e9f4cd1034",
-    "e81c758e1ca177b0942ecad62cf8d321ffc315376135bcbed3df932a6e5b40c0",
-    "f29fd9c52e04403cd2c7d43b6fe2479292e53b2f61969d25256d2d2aca7c6a81",
-    "0ea221716cf13710214dcd331a61cea48308c3940df1d28cfc7fd817c83714e1",
-    "3ab9cab6212fabd723a2c5a1949c2ded19980398b56e6080978e796f45cbbc90",
-    "ebc18868864ad075548cc1784f4f9a237bb98335f9645ee727dac8332a3e3716",
-    "bb61fc17daf8bdd4e16fdcf50137a8d7762bec486ede9249d92e511fcb693676",
-    "e1bcb583985325d0ef5f3ef52957d0371c96d4af767b13e48102bca9d5351a9b",
-    "947c0d94c8213ac7aaa41c4efc95d854246550298259cf1bb489654d0e969050",
-    "cbca32daaae36a872a11da4eaff65d1068ff3f154eedc9d3fc0c214a4e5d32bd",
-    "f4c4db3df4ff0de90f44b027fc2e28c16bf7e5c75ea75b0a9762bbb7ac86e7a3",
-    "4193474b2f1c72f735b13633b219d9cabdd43c21d9c2bb4dfc4809f104ba4c06",
-    "f73e37957c74f554be132986f38b6f1d75339f636dfe2b681a0cf3f88d2733af",
-    "a4c44fc5f5bf213e2be6091ccaed49d8bf039d78f6fbd9c4d7b7428cfcb2eda4",
-    "cab4875269f44a701c5e58190a1d2f6fcb577ea79d842522dcab20ccb39b7ad2",
-    "8ecdb93582b2d5270457b36651b62776256ade3aaa2d7432ae65c14f07432d49",
-]
+def train_valid_split(meta, validation_size, valid_category_ids=None):
+  meta_train = meta[meta['is_train'] == 1]
+  meta_train_split, meta_valid_split = split_on_column(meta_train,
+                             column='vgg_features_clusters',
+                             test_size=validation_size,
+                             random_state=1234,
+                             valid_category_ids=valid_category_ids
+                             )
+  return meta_train_split, meta_valid_split
 
+
+def split_on_column(meta, column, test_size, random_state=1, valid_category_ids=None):
+  if valid_category_ids is None:
+    categories = meta[column].unique()
+    np.random.seed(random_state)
+    valid_category_ids = np.random.choice(categories,
+                        int(test_size * len(categories)))
+  valid = meta[meta[column].isin(valid_category_ids)].sample(frac=1, random_state=random_state)
+  train = meta[~(meta[column].isin(valid_category_ids))].sample(frac=1, random_state=random_state)
+  return train, valid
+
+meta = pd.read_csv('./stage1_metadata.csv')
+
+meta_ts = meta[meta['is_train']==0]
+meta_train, meta_valid = train_valid_split( meta[meta['is_train']==1],0.2,[0])
 
 ############################################################
 #  Configurations
 ############################################################
 
-class NucleusConfig(Config):
-    """Configuration for training on the toy  dataset.
-    Derives from the base Config class and overrides some values.
-    """
-    # Give the configuration a recognizable name
-    NAME = "nucleus"
+class NucleusDsbConfig(Config):
 
-    # Adjust depending on your GPU memory
-    IMAGES_PER_GPU = 4
+  # Give the configuration a recognizable name
+  NAME = "res101"
+    
+  LEARNING_RATE = 1e-2
+  
+  # If enabled, resizes instance masks to a smaller size to reduce
+  # memory load. Recommended when using high-resolution image
+  USE_MINI_MASK = True
+  MINI_MASK_SHAPE = (28, 28)  # (height, width) of the mini-mask
+  
+  # Train on 1 GPU and 8 images per GPU. Batch size is GPUs * images/GPU.
+  GPU_COUNT = 1
+  IMAGES_PER_GPU = 1
+  # Total number of steps (batches of samples) to yield from generator before declaring one epoch finished and starting the next epoch.
+  # typically be equal to the number of samples of your dataset divided by the batch size
+  STEPS_PER_EPOCH = 606
+  VALIDATION_STEPS = 58
 
-    # Number of classes (including background)
-    NUM_CLASSES = 1 + 1  # Background + nucleus
-
-    # Number of training and validation steps per epoch
-    STEPS_PER_EPOCH = (657 - len(VAL_IMAGE_IDS)) // IMAGES_PER_GPU
-    VALIDATION_STEPS = max(1, len(VAL_IMAGE_IDS) // IMAGES_PER_GPU)
-
-    # Don't exclude based on confidence. Since we have two classes
-    # then 0.5 is the minimum anyway as it picks between nucleus and BG
-    DETECTION_MIN_CONFIDENCE = 0
-
-    # Backbone network architecture
-    # Supported values are: resnet50, resnet101
-    BACKBONE = "resnet50"
-
-    # Input image resizing
-    # Random crops of size 512x512
-    IMAGE_RESIZE_MODE = "crop"
-    IMAGE_MIN_DIM = 512
-    IMAGE_MAX_DIM = 512
-    IMAGE_MIN_SCALE = 2.0
-
-    # Length of square anchor side in pixels
-    RPN_ANCHOR_SCALES = (8, 16, 32, 64, 128)
-
-    # ROIs kept after non-maximum supression (training and inference)
-    POST_NMS_ROIS_TRAINING = 1000
-    POST_NMS_ROIS_INFERENCE = 2000
-
-    # Non-max suppression threshold to filter RPN proposals.
-    # You can increase this during training to generate more propsals.
-    RPN_NMS_THRESHOLD = 0.9
-
-    # How many anchors per image to use for RPN training
-    RPN_TRAIN_ANCHORS_PER_IMAGE = 64
-
-    # Image mean (RGB)
-    MEAN_PIXEL = np.array([43.53, 39.56, 48.22])
-
-    # If enabled, resizes instance masks to a smaller size to reduce
-    # memory load. Recommended when using high-resolution images.
-    USE_MINI_MASK = True
-    MINI_MASK_SHAPE = (56, 56)  # (height, width) of the mini-mask
-
-    # Number of ROIs per image to feed to classifier/mask heads
-    # The Mask RCNN paper uses 512 but often the RPN doesn't generate
-    # enough positive proposals to fill this and keep a positive:negative
-    # ratio of 1:3. You can increase the number of proposals by adjusting
-    # the RPN NMS threshold.
-    TRAIN_ROIS_PER_IMAGE = 128
-
-    # Maximum number of ground truth instances to use in one image
-    MAX_GT_INSTANCES = 200
-
-    # Max number of final detections per image
-    DETECTION_MAX_INSTANCES = 400
-    WEIGHT_DECAY = 0.01
+  # Number of classes (including background)
+  NUM_CLASSES = 1 + 1  # background + nucleis
+  IMAGE_MIN_DIM = 768
+  IMAGE_MAX_DIM = 768
+  IMAGE_PADDING = True  # currently, the False option is not supported
+  RPN_ANCHOR_SCALES = (8, 16, 32, 64, 128)  # anchor side in pixels, maybe add a 256?
+  # The strides of each layer of the FPN Pyramid. These values
+  # are based on a Resnet101 backbone.
+  BACKBONE_STRIDES = [4, 8, 16, 32, 64]
+  # How many anchors per image to use for RPN training
+  RPN_TRAIN_ANCHORS_PER_IMAGE = 320 #300
+  
+  # ROIs kept after non-maximum supression (training and inference)
+  POST_NMS_ROIS_TRAINING = 2000
+  POST_NMS_ROIS_INFERENCE = 2000
+  POOL_SIZE = 7
+  MASK_POOL_SIZE = 14
+  MASK_SHAPE = [28, 28]
+  TRAIN_ROIS_PER_IMAGE = 512
+  RPN_NMS_THRESHOLD = 0.7
+  MAX_GT_INSTANCES = 256
+  DETECTION_MAX_INSTANCES = 400 
+  # Minimum probability value to accept a detected instance
+  # ROIs below this threshold are skipped
+  DETECTION_MIN_CONFIDENCE = 0.7 # may be smaller?
+  # Non-maximum suppression threshold for detection
+  DETECTION_NMS_THRESHOLD = 0.3 # 0.3
+  
+  #MEAN_PIXEL = np.array([56.02,54.02,54.26])
+  MEAN_PIXEL = np.array([123.7,116.8,103.9])
+  #MEAN_PIXEL = np.array([.0,.0,.0])
+  # Weight decay regularization
+  WEIGHT_DECAY = 0.0001
+  SCALES = [768]
+  MAIN_SCALE = 0
+  BACKBONE = "resnet101"
+  GRADIENT_CLIP_NORM = 0.5
+  
 
 
-class NucleusInferenceConfig(NucleusConfig):
-    IMAGE_MIN_DIM = 1024
-    IMAGE_MAX_DIM = 1024
-    # Set batch size to 1 to run one image at a time
-    GPU_COUNT = 1
-    IMAGES_PER_GPU = 1
-    # Don't resize imager for inferencing
-    IMAGE_RESIZE_MODE = "pad64"
-    # Non-max suppression threshold to filter RPN proposals.
-    # You can increase this during training to generate more propsals.
-    RPN_NMS_THRESHOLD = 0.7
 
+
+class NucleusInferenceConfig(DsbConfig):
+  GPU_COUNT = 1
+  IMAGES_PER_GPU = 1
 
 ############################################################
 #  Dataset
 ############################################################
 import random
-class NucleusDataset(utils.Dataset):
-
-    def load_nucleus(self, dataset_dir, subset):
-        """Load a subset of the nuclei dataset.
-
-        dataset_dir: Root directory of the dataset
-        subset: Subset to load. Either the name of the sub-directory,
-                such as stage1_train, stage1_test, ...etc. or, one of:
-                * train: stage1_train excluding validation images
-                * val: validation images from VAL_IMAGE_IDS
-        """
-        # Add classes. We have one class.
-        # Naming the dataset nucleus, and the class nucleus
-        self.add_class("nucleus", 1, "nucleus")
-
-        # Which subset?
-        # "val": use hard-coded list above
-        # "train": use data from stage1_train minus the hard-coded list above
-        # else: use the data from the specified sub-directory
-        assert subset in ["train", "val", "stage1_train", "stage1_test", "stage2_test"]
-        subset_dir = "stage1_train" if subset in ["train", "val"] else subset
-        dataset_dir = os.path.join(dataset_dir, subset_dir)
-        if subset == "val":
-            image_ids = VAL_IMAGE_IDS
-        else:
-            # Get image ids from directory names
-            image_ids = next(os.walk(dataset_dir))[1]
-            if subset == "train":
-                image_ids = list(set(image_ids) - set(VAL_IMAGE_IDS))
-
-        # Add images
-        for image_id in image_ids:
-            self.add_image(
-                "nucleus",
-                image_id=image_id,
-                path=os.path.join(dataset_dir, image_id, "images/{}.png".format(image_id)))
-
-    def load_mask(self, image_id):
-        """Generate instance masks for an image.
-       Returns:
-        masks: A bool array of shape [height, width, instance count] with
-            one mask per instance.
-        class_ids: a 1D array of class IDs of the instance masks.
-        """
-        info = self.image_info[image_id]
-        # Get mask directory from image path
-        #m_name_list = ["masks","masks1","masks2","masks3","masks4"]
-        #m_name = np.random.choice(m_name_list,1)[0]
-        mask_dir = os.path.join(info["path"].split("/images/")[0],"masks")
-        #print(mask_dir)
-        # Read mask files from .png image
-        mask = []
-        for f in next(os.walk(mask_dir))[2]:
-            if f.endswith(".png"):
-                m = skimage.io.imread(os.path.join(mask_dir, f)).astype(np.bool)
-                if len(m.shape)==3:
-                    m = m[:,:,0]
-                mask.append(m)
-        mask = np.stack(mask, axis=-1)
-        # Return mask, and array of class IDs of each instance. Since we have
-        # one class ID, we return an array of ones
-        return mask, np.ones([mask.shape[-1]], dtype=np.int32)
-
-    def image_reference(self, image_id):
-        """Return the path of the image."""
-        info = self.image_info[image_id]
-        if info["source"] == "nucleus":
-            return info["id"]
-        else:
-            super(self.__class__, self).image_reference(image_id)
 
 
+
+class DsbDataset(utils.Dataset):
+
+  def load_dataset(self, dataset_dir,subset='train'):
+    self.add_class("dsb", 1, "nuclei")
+    assert subset in ["train", "val", "stage1_train", "stage1_test", "stage2_test"]
+    
+    train_dir = 'stage1_train'
+    test_dir = 'stage1_test'
+    final_dir = 'stage2_test_final'
+
+    
+    if subset == "train":
+      directory  = os.path.join(dataset_dir, train_dir)
+      
+    else subset == "test":
+      directory = os.path.join(dataset_dir, test_dir)
+    elif subset == "final":
+      directory = os.path.join(dataset_dir, final_dir)
+
+    ids = os.list_dir(directory)
+    for i, id in enumerate(ids):
+      image_dir = os.path.join(directory, id)
+      self.add_image("dsb", image_id=i, path=image_dir)
+      
+
+  def load_image(self, image_id, non_zero=None):
+    info = self.image_info[image_id]
+    path = info['path']
+    image_name = os.listdir(os.path.join(path, 'images'))
+    image_path = os.path.join(path, 'images', image_name[0])
+    image = imageio.imread(image_path)
+    
+    if len(image.shape)==2:
+      img = skimage.color.gray2rgb(image)
+      image = img*255.
+    if image.shape[2] >3:
+      image = image[:,:,:3]
+
+    #image = self.preprocess(image)
+    image = image
+    return image
+
+  def image_reference(self, image_id):
+    info = self.image_info[image_id]
+    if info["source"] == "shapes":
+      return info["shapes"]
+    else:
+      super(self.__class__).image_reference(self, image_id)
+
+  def load_mask(self, image_id):
+    info = self.image_info[image_id]
+    path = info['path']
+    mask_dir = os.path.join(path, 'masks')
+    mask_names = os.listdir(mask_dir)
+    count = len(mask_names)
+    mask = []
+    for i, el in enumerate(mask_names):
+      msk_path = os.path.join(mask_dir, el)
+      msk = imageio.imread(msk_path)
+      if np.sum(msk) == 0:
+        print('invalid mask')
+        continue
+      msk = msk.astype('float32')/255.
+      if len(msk.shape) == 3:
+        msk = msk[:,:,0]
+      mask.append(msk)
+    mask = np.asarray(mask)
+    mask[mask > 0.] = 1.
+    mask = np.transpose(mask, (1,2,0))
+    occlusion = np.logical_not(mask[:, :, -1]).astype(np.uint8)
+    count = mask.shape[2]
+    for i in range(count-2, -1, -1):
+      mask[:, :, i] = mask[:, :, i] * occlusion
+      occlusion = np.logical_and(occlusion, np.logical_not(mask[:, :, i]))
+    class_ids = [self.class_names.index('nuclei') for s in range(count)]
+    class_ids = np.asarray(class_ids)
+    return mask, class_ids.astype(np.int32)
+  
+  def preprocess(self, img):
+    gray = skimage.color.rgb2gray(img.astype('uint8'))
+    img = skimage.color.gray2rgb(gray)
+    img *= 255.
+    return img
 ############################################################
 #  Training
 ############################################################
@@ -275,38 +292,23 @@ def train(model):
 
     # Image augmentation
     # http://imgaug.readthedocs.io/en/latest/source/augmenters.html
-    augmentation = iaa.SomeOf((0, 2), [
-        iaa.Fliplr(0.5),
-        iaa.Flipud(0.5),
-        iaa.OneOf([iaa.Affine(rotate=90),
-                   iaa.Affine(rotate=180),
-                   iaa.Affine(rotate=270)]),
-        iaa.Multiply((0.8, 1.5)),
-        iaa.GaussianBlur(sigma=(0.0, 5.0))
-    ])
-
     # *** This training schedule is an example. Update to your needs ***
 
     # If starting from imagenet, train heads only for a bit
     # since they have random weights
-    print("previous ending epoch is ",model.epoch)
-    continue_epoch = int((model.epoch+1)/10)*10
-    print(continue_epoch)
-    for i in range(continue_epoch,100,10):
+
         
-        print("Train network heads")
-        model.train(dataset_train, dataset_val,
-                learning_rate=config.LEARNING_RATE,
-                epochs=i+5,
-                augmentation=augmentation,
-                layers='heads')
+    print("Train network heads")
+    model.train(dataset_train, dataset_val,
+            learning_rate=config.LEARNING_RATE,
+            epochs=30,
+            layers='heads')
         
-        print("Train all layers")
-        model.train(dataset_train, dataset_val,
-                learning_rate=config.LEARNING_RATE,
-                epochs=i+10,
-                augmentation=augmentation,
-                layers='all')
+    print("Train all layers")
+    model.train(dataset_train, dataset_val,
+            learning_rate=config.LEARNING_RATE/10,
+            epochs=40,
+            layers='all')
         
 
 ############################################################
