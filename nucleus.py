@@ -63,9 +63,9 @@ from skimage.morphology import watershed
 from skimage.filters import sobel
 from imp import reload
 import utils
-import model_sep_roi_LH as modellib
+import model as modellib
 import visualize
-from model_sep_roi_LH import log
+from model import log
 import divide
 
 # Root directory of the project

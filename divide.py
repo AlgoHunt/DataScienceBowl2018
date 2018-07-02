@@ -1,5 +1,5 @@
 import numpy as np
-
+from matplotlib import pyplot as plt
 
 def detect_and_disply(model,img,return_mode="thres",verbose = 1):
     results = model.detect([img],return_mode=return_mode)

@@ -2,8 +2,6 @@
 
 This is the Solution for data science bowl 2018 challenge
 
-the result for publc LB is 0.458 at 240/3634
-
 the result for private LB is 0.557 at [25/3634](https://www.kaggle.com/bravelucky)(epoch 64, all four team member have followed me in kaggle) and 0.498 at [111/3634](https://www.kaggle.com/algohunt)(epoch 65), 
 
 Because we have missed the merge deadline we have to make 2 different submit. the huge gap between two epoch may comes from huge data mismatch between stage1 and stage2 dataset, as the two model both provide similar proformance in stage1 LB and local CV.
