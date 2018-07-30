@@ -2,7 +2,6 @@
 
 This is the Solution for data science bowl 2018 challenge
 
-<<<<<<< HEAD
 the result for private LB is 0.557 at [25/3634](https://www.kaggle.com/bravelucky)(epoch 64, all four team member have followed me in kaggle) and 0.498 at [111/3634](https://www.kaggle.com/algohunt)(epoch 65), 
 =======
 the result for publc LB is 0.458 at 240/3634
